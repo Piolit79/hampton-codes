@@ -10,7 +10,7 @@ const OPENAI_API = "https://api.openai.com/v1";
 const FIRECRAWL_API = "https://api.firecrawl.dev/v1";
 const CHUNK_TARGET = 800;
 const CHUNK_OVERLAP_WORDS = 80;
-const MAX_PAGES = 250;
+const MAX_PAGES = 400;
 const POLL_INTERVAL_MS = 5000;
 const MAX_POLL_ATTEMPTS = 24; // 2 minutes max polling
 
