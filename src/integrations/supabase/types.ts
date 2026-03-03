@@ -14,13 +14,118 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      code_chunks: {
+        Row: {
+          content: string
+          created_at: string | null
+          embedding: string | null
+          id: string
+          section_path: string | null
+          section_title: string | null
+          source_id: string
+          source_url: string | null
+          token_count: number | null
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          embedding?: string | null
+          id?: string
+          section_path?: string | null
+          section_title?: string | null
+          source_id: string
+          source_url?: string | null
+          token_count?: number | null
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          embedding?: string | null
+          id?: string
+          section_path?: string | null
+          section_title?: string | null
+          source_id?: string
+          source_url?: string | null
+          token_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "code_chunks_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "code_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      code_sources: {
+        Row: {
+          chunk_count: number
+          created_at: string | null
+          id: string
+          last_ingested_at: string | null
+          municipality: string
+          name: string
+          status: string
+          url: string
+        }
+        Insert: {
+          chunk_count?: number
+          created_at?: string | null
+          id?: string
+          last_ingested_at?: string | null
+          municipality: string
+          name: string
+          status?: string
+          url: string
+        }
+        Update: {
+          chunk_count?: number
+          created_at?: string | null
+          id?: string
+          last_ingested_at?: string | null
+          municipality?: string
+          name?: string
+          status?: string
+          url?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      match_code_chunks: {
+        Args: { match_count?: number; query_embedding: string }
+        Returns: {
+          content: string
+          id: string
+          municipality: string
+          section_path: string
+          section_title: string
+          similarity: number
+          source_id: string
+          source_url: string
+        }[]
+      }
+      match_code_chunks_filtered: {
+        Args: {
+          filter_municipality?: string
+          match_count?: number
+          query_embedding: string
+        }
+        Returns: {
+          content: string
+          id: string
+          municipality: string
+          section_path: string
+          section_title: string
+          similarity: number
+          source_id: string
+          source_url: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

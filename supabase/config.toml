@@ -1,1 +1,7 @@
 project_id = "shticridijsejlwgjxel"
+
+[functions.ingest-code]
+verify_jwt = false
+
+[functions.chat]
+verify_jwt = false
