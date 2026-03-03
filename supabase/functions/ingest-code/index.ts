@@ -61,19 +61,33 @@ function extractLinks(html: string, baseHost: string): string[] {
 
 function chunkText(text: string, sourceUrl: string): Array<{ content: string; section_title: string; section_path: string; source_url: string }> {
   // Split on section markers
-  const sectionPattern = /(?=\n##\s|\n§\s|\nSection\s\d|\nARTICLE\s)/gi;
-  const rawSections = text.split(sectionPattern).filter((s) => s.trim().length > 50);
+  const sectionPattern = /(?=\n##\s|\n§\s|\nSection\s\d|\nARTICLE\s|\nChapter\s|\nCh\s\d)/gi;
+  let rawSections = text.split(sectionPattern).filter((s) => s.trim().length > 50);
+
+  // Fallback: if no sections found, split by paragraphs
+  if (rawSections.length === 0) {
+    const paragraphs = text.split(/\n\n+/).filter((s) => s.trim().length > 30);
+    if (paragraphs.length === 0) return [];
+    let current = "";
+    for (const p of paragraphs) {
+      if ((current + " " + p).split(/\s+/).length > CHUNK_TARGET && current.length > 0) {
+        rawSections.push(current.trim());
+        current = p;
+      } else {
+        current = current ? current + "\n\n" + p : p;
+      }
+    }
+    if (current.trim().length > 30) rawSections.push(current.trim());
+  }
 
   const chunks: Array<{ content: string; section_title: string; section_path: string; source_url: string }> = [];
 
   for (const section of rawSections) {
     const lines = section.trim().split("\n");
     const titleLine = lines[0].replace(/^#+\s*/, "").trim();
-
     const words = section.split(/\s+/);
 
     if (words.length <= CHUNK_TARGET * 1.5) {
-      // Section fits in one chunk
       chunks.push({
         content: section.trim(),
         section_title: titleLine.slice(0, 200),
@@ -81,7 +95,6 @@ function chunkText(text: string, sourceUrl: string): Array<{ content: string; se
         source_url: sourceUrl,
       });
     } else {
-      // Split long sections with overlap
       let i = 0;
       let chunkIndex = 0;
       while (i < words.length) {
@@ -155,29 +168,35 @@ serve(async (req) => {
 
       let html = "";
       try {
+        console.log(`Fetching: ${url}`);
         const resp = await fetch(url, {
-          headers: { "User-Agent": "Mozilla/5.0 (compatible; HamptonCodesBot/1.0)" },
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
           signal: AbortSignal.timeout(15000),
         });
-        if (!resp.ok) continue;
+        if (!resp.ok) {
+          console.log(`  HTTP ${resp.status} for ${url}`);
+          continue;
+        }
         html = await resp.text();
-      } catch {
+        console.log(`  Got ${html.length} chars of HTML`);
+      } catch (e) {
+        console.log(`  Fetch error for ${url}: ${e}`);
         continue;
       }
 
       const text = htmlToText(html);
+      console.log(`  Extracted ${text.length} chars of text, chunks possible: ${text.length > 200}`);
       if (text.length > 200) {
         const chunks = chunkText(text, url);
+        console.log(`  Created ${chunks.length} chunks`);
         allChunks.push(...chunks);
       }
 
-      // Only follow links from the root page to avoid unbounded crawl
-      if (url === source.url) {
-        const links = extractLinks(html, rootUrl.host)
-          .filter((l) => !visited.has(l))
-          .slice(0, MAX_PAGES);
-        queue.push(...links);
-      }
+      // Follow links from all pages (within the same host)
+      const links = extractLinks(html, rootUrl.host)
+        .filter((l) => !visited.has(l) && !queue.includes(l))
+        .slice(0, MAX_PAGES - visited.size);
+      queue.push(...links);
     }
 
     if (allChunks.length === 0) {
