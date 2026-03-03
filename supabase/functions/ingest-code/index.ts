@@ -10,9 +10,7 @@ const OPENAI_API = "https://api.openai.com/v1";
 const FIRECRAWL_API = "https://api.firecrawl.dev/v1";
 const CHUNK_TARGET = 800;
 const CHUNK_OVERLAP_WORDS = 80;
-const MAX_PAGES = 400;
-const POLL_INTERVAL_MS = 5000;
-const MAX_POLL_ATTEMPTS = 24; // 2 minutes max polling
+const MAX_URLS = 400;
 
 function chunkText(text: string, sourceUrl: string, title: string) {
   const sectionPattern = /(?=\n##\s|\n###\s|\n§\s|\nSection\s\d|\nARTICLE\s)/gi;
@@ -59,37 +57,34 @@ async function embedTexts(texts: string[], apiKey: string): Promise<number[][]> 
   return json.data.map((d: { embedding: number[] }) => d.embedding);
 }
 
-async function startFirecrawlCrawl(url: string, apiKey: string): Promise<string> {
-  const resp = await fetch(`${FIRECRAWL_API}/crawl`, {
+async function mapUrls(url: string, apiKey: string): Promise<string[]> {
+  const resp = await fetch(`${FIRECRAWL_API}/map`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url,
-      limit: MAX_PAGES,
-      scrapeOptions: { formats: ["markdown"], onlyMainContent: true },
-    }),
+    body: JSON.stringify({ url, limit: MAX_URLS, includeSubdomains: false }),
   });
-  if (!resp.ok) throw new Error(`Firecrawl crawl failed: ${resp.status} ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`Firecrawl map failed: ${resp.status} ${await resp.text()}`);
   const json = await resp.json();
-  if (!json.id) throw new Error("Firecrawl did not return a crawl ID");
-  return json.id;
+  return (json.links || []) as string[];
 }
 
-async function pollFirecrawlCrawl(crawlId: string, apiKey: string): Promise<Array<{ markdown: string; metadata: { sourceURL: string; title?: string } }>> {
-  for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-
-    const resp = await fetch(`${FIRECRAWL_API}/crawl/${crawlId}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+async function scrapePage(url: string, apiKey: string): Promise<{ markdown: string; title: string } | null> {
+  try {
+    const resp = await fetch(`${FIRECRAWL_API}/scrape`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+      signal: AbortSignal.timeout(20000),
     });
-    if (!resp.ok) throw new Error(`Firecrawl poll failed: ${resp.status}`);
+    if (!resp.ok) return null;
     const json = await resp.json();
-
-    if (json.status === "completed") return json.data || [];
-    if (json.status === "failed") throw new Error("Firecrawl crawl failed");
-    // still running — keep polling
+    return {
+      markdown: json.data?.markdown || "",
+      title: json.data?.metadata?.title || "",
+    };
+  } catch {
+    return null;
   }
-  throw new Error("Firecrawl crawl timed out after 2 minutes");
 }
 
 serve(async (req) => {
@@ -113,39 +108,45 @@ serve(async (req) => {
       .from("code_sources").select("*").eq("id", source_id).single();
     if (srcErr || !source) throw new Error("Source not found");
 
-    // Start crawl
-    const crawlId = await startFirecrawlCrawl(source.url, FIRECRAWL_API_KEY);
+    // Step 1: Map all URLs on the site
+    console.log(`Mapping URLs for ${source.url}`);
+    let urls = await mapUrls(source.url, FIRECRAWL_API_KEY);
+    console.log(`Found ${urls.length} URLs`);
 
-    // Poll until complete
-    const pages = await pollFirecrawlCrawl(crawlId, FIRECRAWL_API_KEY);
+    // Filter to only URLs on the same ecode360 code (same path prefix)
+    const rootPath = new URL(source.url).pathname;
+    urls = urls.filter((u) => {
+      try {
+        const parsed = new URL(u);
+        return parsed.hostname === "ecode360.com" &&
+               (parsed.pathname.startsWith(rootPath) || parsed.pathname.match(/^\/[A-Z0-9]{8}$/));
+      } catch { return false; }
+    }).slice(0, MAX_URLS);
 
-    if (!pages || pages.length === 0) {
-      await supabase.from("code_sources").update({ status: "error" }).eq("id", source_id);
-      return new Response(JSON.stringify({ error: "No pages returned from crawl" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    // Always include the root URL
+    if (!urls.includes(source.url)) urls.unshift(source.url);
 
-    // Chunk all pages
+    console.log(`Filtered to ${urls.length} relevant URLs`);
+
+    // Step 2: Scrape each URL
     const allChunks: Array<{ content: string; section_title: string; section_path: string; source_url: string }> = [];
-    for (const page of pages) {
-      if (!page.markdown || page.markdown.length < 100) continue;
-      const pageUrl = page.metadata?.sourceURL || source.url;
-      const pageTitle = page.metadata?.title || source.name;
-      allChunks.push(...chunkText(page.markdown, pageUrl, pageTitle));
+
+    for (const url of urls) {
+      const result = await scrapePage(url, FIRECRAWL_API_KEY);
+      if (!result || result.markdown.length < 100) continue;
+      allChunks.push(...chunkText(result.markdown, url, result.title));
     }
 
     if (allChunks.length === 0) {
       await supabase.from("code_sources").update({ status: "error" }).eq("id", source_id);
-      return new Response(JSON.stringify({ error: "No content extracted from pages" }), {
+      return new Response(JSON.stringify({ error: "No content extracted" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Delete old chunks
+    // Step 3: Delete old chunks and store new ones
     await supabase.from("code_chunks").delete().eq("source_id", source_id);
 
-    // Embed and store in batches
     const BATCH = 20;
     let stored = 0;
     for (let i = 0; i < allChunks.length; i += BATCH) {
@@ -171,7 +172,7 @@ serve(async (req) => {
     }).eq("id", source_id);
 
     return new Response(
-      JSON.stringify({ success: true, chunks: stored, pages: pages.length }),
+      JSON.stringify({ success: true, chunks: stored, pages: urls.length }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {
