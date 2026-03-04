@@ -22,10 +22,9 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
   });
 
   return res.status(200).json({
-    sources: sources.data,
     total_chunks: totalChunks.count,
     null_embeddings: nullEmbeddings.count,
-    sample_titles: sampleTitles.data,
-    rpc_test: { data: rpcTest.data, error: rpcTest.error },
+    rpc_error: rpcTest.error,
+    rpc_returned_rows: rpcTest.data?.length ?? 0,
   });
 }
