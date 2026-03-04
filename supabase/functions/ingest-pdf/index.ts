@@ -1,12 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// Import from lib path to avoid Deno test-file loading issue
+import pdf from "npm:pdf-parse/lib/pdf-parse.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const FIRECRAWL_API = "https://api.firecrawl.dev/v1";
 const CHUNK_TARGET = 800;
 const CHUNK_OVERLAP_WORDS = 80;
 
@@ -46,9 +47,6 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-    if (!FIRECRAWL_API_KEY) throw new Error("FIRECRAWL_API_KEY not set");
-
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -61,42 +59,31 @@ serve(async (req) => {
       .from("code_sources").select("*").eq("id", source_id).single();
     if (!source) throw new Error("Source not found");
 
-    // Create a signed URL for Firecrawl to fetch the PDF (valid 1 hour)
-    const { data: signedData, error: signedErr } = await supabase.storage
+    // Download PDF directly from Supabase Storage
+    const { data: fileData, error: downloadErr } = await supabase.storage
       .from("code-pdfs")
-      .createSignedUrl(file_path, 3600);
-    if (signedErr || !signedData) throw new Error("Failed to create signed URL for PDF");
+      .download(file_path);
+    if (downloadErr || !fileData) throw new Error(`Failed to download PDF: ${downloadErr?.message}`);
 
-    // Extract text from PDF via Firecrawl
-    const scrapeResp = await fetch(`${FIRECRAWL_API}/scrape`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${FIRECRAWL_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ url: signedData.signedUrl, formats: ["markdown"], timeout: 300000 }),
-      signal: AbortSignal.timeout(360000),
-    });
+    // Extract text locally — no external API, no timeout issues
+    const buffer = await fileData.arrayBuffer();
+    const pdfData = await pdf(Buffer.from(buffer));
+    const text = pdfData.text;
 
-    if (!scrapeResp.ok) {
-      const errBody = await scrapeResp.text();
-      throw new Error(`Firecrawl PDF extraction failed: ${scrapeResp.status} ${errBody}`);
+    if (!text || text.length < 100) {
+      throw new Error("No text extracted — PDF may be image-based (scanned). Try a text-based PDF.");
     }
 
-    const scrapeJson = await scrapeResp.json();
-    const markdown = scrapeJson.data?.markdown || "";
-    if (markdown.length < 100) throw new Error("No text extracted from PDF — file may be image-based");
-
     // Chunk the extracted text
-    const chunks = chunkText(markdown, source.url, source.name);
+    const chunks = chunkText(text, source.url, source.name);
     if (chunks.length === 0) throw new Error("No chunks created from PDF text");
 
     // Clear only pending queue items — preserve already-processed chunks so
-    // multi-part uploads (split PDFs) accumulate rather than overwrite
+    // multi-part uploads accumulate rather than overwrite
     await supabase.from("ingest_queue").delete()
       .eq("source_id", source_id).eq("status", "pending");
 
-    // Store chunks in the queue with content pre-filled (no scraping needed)
+    // Store chunks in the queue with content pre-filled
     const INSERT_BATCH = 100;
     for (let i = 0; i < chunks.length; i += INSERT_BATCH) {
       const batch = chunks.slice(i, i + INSERT_BATCH).map((chunk) => ({
@@ -108,7 +95,7 @@ serve(async (req) => {
       await supabase.from("ingest_queue").insert(batch);
     }
 
-    // Update source status — keep existing chunk_count so parts accumulate
+    // Update source status — keep existing chunk_count so multi-part uploads accumulate
     await supabase.from("code_sources").update({
       status: "ingesting",
       total_urls: chunks.length,
