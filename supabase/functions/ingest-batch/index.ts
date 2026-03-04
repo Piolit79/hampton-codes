@@ -48,15 +48,36 @@ async function scrapeForContent(url: string, apiKey: string): Promise<{ markdown
   } catch { return null; }
 }
 
-async function embedTexts(texts: string[], apiKey: string): Promise<number[][]> {
+const EMBED_BATCH = 20;
+
+async function embedBatch(texts: string[], apiKey: string): Promise<number[][]> {
+  // Truncate any individual text to ~8000 tokens (~6000 words) to stay under OpenAI's limit
+  const truncated = texts.map((t) => {
+    const words = t.split(/\s+/);
+    return words.length > 6000 ? words.slice(0, 6000).join(" ") : t;
+  });
   const resp = await fetch(`${OPENAI_API}/embeddings`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "text-embedding-3-small", input: texts }),
+    body: JSON.stringify({ model: "text-embedding-3-small", input: truncated }),
   });
-  if (!resp.ok) throw new Error(`Embeddings failed: ${resp.status}`);
+  if (!resp.ok) {
+    const errBody = await resp.text();
+    console.error("OpenAI embeddings error:", resp.status, errBody);
+    throw new Error(`Embeddings failed: ${resp.status} - ${errBody.slice(0, 200)}`);
+  }
   const json = await resp.json();
   return json.data.map((d: { embedding: number[] }) => d.embedding);
+}
+
+async function embedTexts(texts: string[], apiKey: string): Promise<number[][]> {
+  const allEmbeddings: number[][] = [];
+  for (let i = 0; i < texts.length; i += EMBED_BATCH) {
+    const batch = texts.slice(i, i + EMBED_BATCH);
+    const embeddings = await embedBatch(batch, apiKey);
+    allEmbeddings.push(...embeddings);
+  }
+  return allEmbeddings;
 }
 
 serve(async (req) => {
