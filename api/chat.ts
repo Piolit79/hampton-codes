@@ -90,8 +90,9 @@ If the code sections don't contain enough information to answer definitively, sa
     }));
 
     return res.status(200).json({ answer, sources });
-  } catch (e) {
+  } catch (e: any) {
     console.error('chat error:', e);
-    return res.status(500).json({ error: e instanceof Error ? e.message : 'Unknown error' });
+    const msg = e?.message || e?.error_description || JSON.stringify(e) || 'Unknown error';
+    return res.status(500).json({ error: msg });
   }
 }
