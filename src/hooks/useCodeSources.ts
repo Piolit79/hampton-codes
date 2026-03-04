@@ -146,11 +146,13 @@ export function useUploadAndIngest() {
       // Step 7: Run ingest-batch until done
       let done = false;
       while (!done) {
-        const { data: batchData, error: batchErr } = await supabase.functions.invoke('ingest-batch', {
-          body: { source_id: sourceId },
+        const batchResp = await fetch('/api/ingest-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source_id: sourceId }),
         });
-        if (batchErr) throw batchErr;
-        if (batchData?.error) throw new Error(batchData.error);
+        const batchData = await batchResp.json();
+        if (!batchResp.ok) throw new Error(batchData.error || 'Batch embedding failed');
         done = batchData.done;
         qc.invalidateQueries({ queryKey: ['code-sources'] });
         if (!done) await new Promise((r) => setTimeout(r, 500));
