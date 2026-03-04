@@ -8,7 +8,7 @@ const corsHeaders = {
 
 const OPENAI_API = "https://api.openai.com/v1";
 const FIRECRAWL_API = "https://api.firecrawl.dev/v1";
-const BATCH_SIZE = 15;
+const BATCH_SIZE = 8;
 const CHUNK_TARGET = 800;
 const CHUNK_OVERLAP_WORDS = 80;
 
@@ -115,30 +115,42 @@ serve(async (req) => {
     // Scrape, chunk, embed
     const allChunks: Array<{ content: string; section_title: string; section_path: string; source_url: string }> = [];
     for (const item of batch) {
-      const result = await scrapeForContent(item.url, FIRECRAWL_API_KEY);
-      if (!result || result.markdown.length < 200) continue;
-      allChunks.push(...chunkText(result.markdown, item.url, result.title));
+      await new Promise((r) => setTimeout(r, 500)); // rate limit buffer
+      try {
+        const result = await scrapeForContent(item.url, FIRECRAWL_API_KEY);
+        if (!result || result.markdown.length < 200) continue;
+        allChunks.push(...chunkText(result.markdown, item.url, result.title));
+      } catch {
+        continue; // skip failed URLs, don't crash batch
+      }
     }
 
+    let chunksAdded = 0;
     if (allChunks.length > 0) {
-      const embeddings = await embedTexts(allChunks.map((c) => c.content), OPENAI_API_KEY);
-      const rows = allChunks.map((chunk, j) => ({
-        source_id, content: chunk.content, section_title: chunk.section_title,
-        section_path: chunk.section_path, source_url: chunk.source_url,
-        embedding: JSON.stringify(embeddings[j]),
-        token_count: Math.ceil(chunk.content.split(/\s+/).length * 1.3),
-      }));
-      await supabase.from("code_chunks").insert(rows);
+      try {
+        const embeddings = await embedTexts(allChunks.map((c) => c.content), OPENAI_API_KEY);
+        const rows = allChunks.map((chunk, j) => ({
+          source_id, content: chunk.content, section_title: chunk.section_title,
+          section_path: chunk.section_path, source_url: chunk.source_url,
+          embedding: JSON.stringify(embeddings[j]),
+          token_count: Math.ceil(chunk.content.split(/\s+/).length * 1.3),
+        }));
+        await supabase.from("code_chunks").insert(rows);
+        chunksAdded = rows.length;
+      } catch (embedErr) {
+        console.error("Embedding/insert failed for batch, skipping:", embedErr);
+        // Mark batch done anyway so we don't get stuck
+      }
     }
 
     // Mark batch done and update progress
     await supabase.from("ingest_queue").update({ status: "done", processed_at: new Date().toISOString() }).in("id", batch.map((b) => b.id));
-    await supabase.rpc("increment_processed_urls", { p_source_id: source_id, p_count: batch.length, p_chunks: allChunks.length });
+    await supabase.rpc("increment_processed_urls", { p_source_id: source_id, p_count: batch.length, p_chunks: chunksAdded });
 
     // Count remaining
     const { count: remaining } = await supabase.from("ingest_queue").select("*", { count: "exact", head: true }).eq("source_id", source_id).eq("status", "pending");
 
-    return new Response(JSON.stringify({ done: false, processed: batch.length, remaining: remaining || 0, chunks_added: allChunks.length }), {
+    return new Response(JSON.stringify({ done: false, processed: batch.length, remaining: remaining || 0, chunks_added: chunksAdded }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
