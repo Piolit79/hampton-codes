@@ -39,11 +39,13 @@ export function useChat() {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('chat', {
-        body: { question, municipality: municipality || null },
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, municipality: municipality || null }),
       });
-
-      if (error) throw error;
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Chat failed');
 
       setMessages((prev) =>
         prev.map((m) =>
