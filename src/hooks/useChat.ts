@@ -44,7 +44,12 @@ export function useChat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, municipality: municipality || null }),
       });
-      const data = await resp.json();
+      let data: any;
+      try {
+        data = await resp.json();
+      } catch {
+        throw new Error(`Server error ${resp.status} — response was empty or timed out`);
+      }
       if (!resp.ok) throw new Error(data.error || 'Chat failed');
 
       setMessages((prev) =>
