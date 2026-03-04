@@ -47,8 +47,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!source_id || !file_path) return res.status(400).json({ error: 'source_id and file_path required' });
 
     const supabase = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      process.env.SUPABASE_URL ?? 'https://shticridijsejlwgjxel.supabase.co',
+      process.env.SUPABASE_ANON_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNodGljcmlkaWpzZWpsd2dqeGVsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1MTE5NDAsImV4cCI6MjA4ODA4Nzk0MH0.0ltXwCHsAigEWgZkZNYlYfEf5tWWs3m4XJcDk7vBv8Q'
     );
 
     const { data: source } = await supabase
