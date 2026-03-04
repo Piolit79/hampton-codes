@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import pdf from "npm:pdf-parse/lib/pdf-parse.js";
+import { extractText } from "unpdf";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,10 +64,9 @@ serve(async (req) => {
       .download(file_path);
     if (downloadErr || !fileData) throw new Error(`Failed to download PDF: ${downloadErr?.message}`);
 
-    // Extract text locally — no external API, no timeout issues
+    // Extract text locally using unpdf (edge-compatible) — no external API, no timeout issues
     const buffer = await fileData.arrayBuffer();
-    const pdfData = await pdf(Buffer.from(buffer));
-    const text = pdfData.text;
+    const { text } = await extractText(new Uint8Array(buffer), { mergePages: true });
 
     if (!text || text.length < 100) {
       throw new Error("No text extracted — PDF may be image-based (scanned). Try a text-based PDF.");
