@@ -99,6 +99,7 @@ export type Database = {
       }
       ingest_queue: {
         Row: {
+          content: string | null
           created_at: string | null
           id: string
           processed_at: string | null
@@ -107,6 +108,7 @@ export type Database = {
           url: string
         }
         Insert: {
+          content?: string | null
           created_at?: string | null
           id?: string
           processed_at?: string | null
@@ -115,6 +117,7 @@ export type Database = {
           url: string
         }
         Update: {
+          content?: string | null
           created_at?: string | null
           id?: string
           processed_at?: string | null
