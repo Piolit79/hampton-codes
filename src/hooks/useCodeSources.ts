@@ -50,12 +50,14 @@ export function useUploadAndIngest() {
 
       toast.info('Extracting text from PDF...');
 
-      // Extract text and chunk via edge function
-      const { data, error: pdfErr } = await supabase.functions.invoke('ingest-pdf', {
-        body: { source_id: sourceId, file_path: filePath },
+      // Extract text and chunk via Vercel API route
+      const pdfResp = await fetch('/api/ingest-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: sourceId, file_path: filePath }),
       });
-      if (pdfErr) throw pdfErr;
-      if (data?.error) throw new Error(data.error);
+      const data = await pdfResp.json();
+      if (!pdfResp.ok) throw new Error(data.error || 'PDF extraction failed');
 
       toast.info(`Processing ${data.total_chunks} chunks...`);
       qc.invalidateQueries({ queryKey: ['code-sources'] });
