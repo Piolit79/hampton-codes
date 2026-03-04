@@ -74,8 +74,8 @@ serve(async (req) => {
         Authorization: `Bearer ${FIRECRAWL_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ url: signedData.signedUrl, formats: ["markdown"] }),
-      signal: AbortSignal.timeout(90000),
+      body: JSON.stringify({ url: signedData.signedUrl, formats: ["markdown"], timeout: 300000 }),
+      signal: AbortSignal.timeout(360000),
     });
 
     if (!scrapeResp.ok) {
