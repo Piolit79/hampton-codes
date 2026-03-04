@@ -1,4 +1,5 @@
-import { useQuery, useMutation, useQueryClient, useCallback } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
