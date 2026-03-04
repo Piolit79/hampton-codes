@@ -66,7 +66,9 @@ export type Database = {
           last_ingested_at: string | null
           municipality: string
           name: string
+          processed_urls: number
           status: string
+          total_urls: number
           url: string
         }
         Insert: {
@@ -76,7 +78,9 @@ export type Database = {
           last_ingested_at?: string | null
           municipality: string
           name: string
+          processed_urls?: number
           status?: string
+          total_urls?: number
           url: string
         }
         Update: {
@@ -86,16 +90,57 @@ export type Database = {
           last_ingested_at?: string | null
           municipality?: string
           name?: string
+          processed_urls?: number
           status?: string
+          total_urls?: number
           url?: string
         }
         Relationships: []
+      }
+      ingest_queue: {
+        Row: {
+          created_at: string | null
+          id: string
+          processed_at: string | null
+          source_id: string
+          status: string
+          url: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          processed_at?: string | null
+          source_id: string
+          status?: string
+          url: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          processed_at?: string | null
+          source_id?: string
+          status?: string
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingest_queue_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "code_sources"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      increment_processed_urls: {
+        Args: { p_chunks: number; p_count: number; p_source_id: string }
+        Returns: undefined
+      }
       match_code_chunks: {
         Args: { match_count?: number; query_embedding: string }
         Returns: {

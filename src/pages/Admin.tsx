@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { AppLayout } from '@/components/AppLayout';
 import { useCodeSources, useIngestSource } from '@/hooks/useCodeSources';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, RefreshCw, CheckCircle, AlertCircle, Clock, ExternalLink } from 'lucide-react';
@@ -15,6 +16,13 @@ const STATUS_CONFIG = {
 export default function Admin() {
   const { data: sources, isLoading } = useCodeSources();
   const ingest = useIngestSource();
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+
+  const handleIngest = async (sourceId: string) => {
+    setActiveSourceId(sourceId);
+    await ingest.ingest(sourceId);
+    setActiveSourceId(null);
+  };
 
   if (isLoading) {
     return (
@@ -43,7 +51,8 @@ export default function Admin() {
           {(sources || []).map((source) => {
             const cfg = STATUS_CONFIG[source.status] || STATUS_CONFIG.pending;
             const StatusIcon = cfg.icon;
-            const isIngesting = ingest.isPending && ingest.variables === source.id;
+            const isIngesting = activeSourceId === source.id || source.status === 'ingesting';
+            const progressPct = source.total_urls > 0 ? Math.round((source.processed_urls / source.total_urls) * 100) : 0;
 
             return (
               <Card key={source.id} className="border border-border">
@@ -74,15 +83,30 @@ export default function Admin() {
                           <span>Last ingested {new Date(source.last_ingested_at).toLocaleDateString()}</span>
                         )}
                       </div>
+
+                      {source.status === 'ingesting' && source.total_urls > 0 && (
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
+                            <span>Processing pages...</span>
+                            <span>{source.processed_urls}/{source.total_urls}</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-primary transition-all duration-500"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <Button
                       size="sm"
                       variant={source.status === 'ready' ? 'outline' : 'default'}
                       className="gap-1.5 shrink-0"
-                      disabled={isIngesting || source.status === 'ingesting'}
-                      onClick={() => ingest.mutate(source.id)}
+                      disabled={isIngesting}
+                      onClick={() => handleIngest(source.id)}
                     >
-                      {isIngesting || source.status === 'ingesting' ? (
+                      {isIngesting ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : source.status === 'ready' ? (
                         <RefreshCw className="h-3.5 w-3.5" />
@@ -98,8 +122,8 @@ export default function Admin() {
 
         <div className="mt-8 rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground space-y-1">
           <p className="font-medium text-foreground">How ingestion works</p>
-          <p>Clicking "Ingest" fetches the building code from the source URL, splits it into sections, and generates vector embeddings so it can be searched semantically.</p>
-          <p>Ingestion may take 1–5 minutes depending on the code's length. You can navigate away while it runs.</p>
+          <p>Clicking "Ingest" discovers all section URLs, then processes them in small batches to avoid timeouts. Progress updates in real-time.</p>
+          <p>You can navigate away while it runs — batches will continue processing.</p>
         </div>
       </div>
     </AppLayout>
