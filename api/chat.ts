@@ -49,11 +49,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .slice(0, 3);
 
       if (terms.length > 0) {
-        const { data: kbChunks, error: kbErr } = await supabase
-          .from('code_chunks')
-          .select('id, source_id, content, section_title, section_path, source_url')
-          .ilike('content', `%${terms[0]}%`)
-          .limit(MATCH_COUNT * 3); // fetch more so we can filter by municipality
+        // Try RPC text search first (fast once index is built), then fall back to title scan
+        let kbChunks: any[] | null = null;
+        let kbErr: any = null;
+
+        const textRpc = await supabase.rpc('search_code_chunks_text', {
+          search_query: terms.join(' '),
+          match_count: MATCH_COUNT * 3,
+        });
+
+        if (!textRpc.error && textRpc.data && textRpc.data.length > 0) {
+          kbChunks = textRpc.data;
+        } else {
+          // Last resort: scan section_title (short strings, fast even without index)
+          const titleResult = await supabase
+            .from('code_chunks')
+            .select('id, source_id, content, section_title, section_path, source_url')
+            .ilike('section_title', `%${terms[0]}%`)
+            .limit(MATCH_COUNT * 3);
+          kbChunks = titleResult.data;
+          kbErr = titleResult.error;
+        }
 
         if (!kbErr && kbChunks && kbChunks.length > 0) {
           const sourceIds = [...new Set(kbChunks.map((c: any) => c.source_id))];
