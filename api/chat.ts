@@ -41,37 +41,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (matchErr || !chunks || chunks.length === 0) {
       console.log('Vector search unavailable, using keyword fallback:', matchErr?.message);
 
+      // Include words 3+ chars, skip common stop words
+      const STOP = new Set(['the','and','for','are','was','what','how','can','does','this','that','with','from','have','will','which','when','where','who','why']);
       const terms = question
         .toLowerCase()
         .replace(/[^a-z0-9\s]/g, '')
         .split(/\s+/)
-        .filter((w: string) => w.length > 4)
-        .slice(0, 3);
+        .filter((w: string) => w.length >= 3 && !STOP.has(w))
+        .slice(0, 5);
 
       if (terms.length > 0) {
-        // Try RPC text search first (fast once index is built), then fall back to title scan
-        let kbChunks: any[] | null = null;
-        let kbErr: any = null;
-
+        // Try RPC text search first (fast once GIN index is applied)
         const textRpc = await supabase.rpc('search_code_chunks_text', {
           search_query: terms.join(' '),
           match_count: MATCH_COUNT * 3,
         });
 
+        let kbChunks: any[] | null = null;
+
         if (!textRpc.error && textRpc.data && textRpc.data.length > 0) {
           kbChunks = textRpc.data;
         } else {
-          // Last resort: scan section_title (short strings, fast even without index)
-          const titleResult = await supabase
-            .from('code_chunks')
-            .select('id, source_id, content, section_title, section_path, source_url')
-            .ilike('section_title', `%${terms[0]}%`)
-            .limit(MATCH_COUNT * 3);
-          kbChunks = titleResult.data;
-          kbErr = titleResult.error;
+          // Scan section_title for each keyword until we get results
+          for (const term of terms) {
+            const { data, error } = await supabase
+              .from('code_chunks')
+              .select('id, source_id, content, section_title, section_path, source_url')
+              .ilike('section_title', `%${term}%`)
+              .limit(MATCH_COUNT * 3);
+            if (!error && data && data.length > 0) {
+              kbChunks = data;
+              break;
+            }
+          }
         }
 
-        if (!kbErr && kbChunks && kbChunks.length > 0) {
+        if (kbChunks && kbChunks.length > 0) {
           const sourceIds = [...new Set(kbChunks.map((c: any) => c.source_id))];
           const { data: sources } = await supabase
             .from('code_sources')
@@ -100,11 +105,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    if (matchErr) throw matchErr;
-
-    if (!chunks || chunks.length === 0) {
+    // If all searches failed, return a friendly message instead of a scary error
+    if (matchErr || !chunks || chunks.length === 0) {
       return res.status(200).json({
-        answer: "I couldn't find relevant sections in the building codes for your question. Try rephrasing, or make sure the relevant municipality's code has been ingested.",
+        answer: !chunks || chunks.length === 0
+          ? "I couldn't find relevant sections for that question. Try using specific terms that appear in building codes, like 'setback', 'height', 'parking', 'accessory structure', or 'lot coverage'."
+          : "Search is temporarily unavailable while the database index is being optimized. Please try again in a moment, or rephrase using specific code terms.",
         sources: [],
       });
     }
