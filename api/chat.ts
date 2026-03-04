@@ -35,7 +35,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? { query_embedding: queryEmbedding, match_count: MATCH_COUNT, filter_municipality: municipality }
       : { query_embedding: queryEmbedding, match_count: MATCH_COUNT };
 
-    const { data: chunks, error: matchErr } = await supabase.rpc(rpcName, rpcArgs);
+    let { data: chunks, error: matchErr } = await supabase.rpc(rpcName, rpcArgs);
+
+    // Keyword fallback if vector search times out or returns nothing
+    if (matchErr || !chunks || chunks.length === 0) {
+      console.log('Vector search unavailable, using keyword fallback:', matchErr?.message);
+
+      const terms = question
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter((w: string) => w.length > 4)
+        .slice(0, 3);
+
+      if (terms.length > 0) {
+        const { data: kbChunks, error: kbErr } = await supabase
+          .from('code_chunks')
+          .select('id, source_id, content, section_title, section_path, source_url')
+          .ilike('content', `%${terms[0]}%`)
+          .limit(MATCH_COUNT * 3); // fetch more so we can filter by municipality
+
+        if (!kbErr && kbChunks && kbChunks.length > 0) {
+          const sourceIds = [...new Set(kbChunks.map((c: any) => c.source_id))];
+          const { data: sources } = await supabase
+            .from('code_sources')
+            .select('id, municipality')
+            .in('id', sourceIds);
+
+          const sourceMap = Object.fromEntries(
+            (sources || []).map((s: any) => [s.id, s.municipality])
+          );
+
+          const withMunicipality = kbChunks.map((c: any) => ({
+            ...c,
+            municipality: sourceMap[c.source_id] || 'Unknown',
+            similarity: 0.5,
+          }));
+
+          const filtered = municipality
+            ? withMunicipality.filter((c: any) => c.municipality === municipality)
+            : withMunicipality;
+
+          if (filtered.length > 0) {
+            chunks = filtered.slice(0, MATCH_COUNT);
+            matchErr = null;
+          }
+        }
+      }
+    }
+
     if (matchErr) throw matchErr;
 
     if (!chunks || chunks.length === 0) {
