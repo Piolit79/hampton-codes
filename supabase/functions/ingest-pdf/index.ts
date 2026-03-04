@@ -91,9 +91,10 @@ serve(async (req) => {
     const chunks = chunkText(markdown, source.url, source.name);
     if (chunks.length === 0) throw new Error("No chunks created from PDF text");
 
-    // Clear old queue and chunks for this source
-    await supabase.from("ingest_queue").delete().eq("source_id", source_id);
-    await supabase.from("code_chunks").delete().eq("source_id", source_id);
+    // Clear only pending queue items — preserve already-processed chunks so
+    // multi-part uploads (split PDFs) accumulate rather than overwrite
+    await supabase.from("ingest_queue").delete()
+      .eq("source_id", source_id).eq("status", "pending");
 
     // Store chunks in the queue with content pre-filled (no scraping needed)
     const INSERT_BATCH = 100;
@@ -107,12 +108,11 @@ serve(async (req) => {
       await supabase.from("ingest_queue").insert(batch);
     }
 
-    // Update source status
+    // Update source status — keep existing chunk_count so parts accumulate
     await supabase.from("code_sources").update({
       status: "ingesting",
       total_urls: chunks.length,
       processed_urls: 0,
-      chunk_count: 0,
     }).eq("id", source_id);
 
     return new Response(
