@@ -45,8 +45,12 @@ https://github.com/Piolit79/hampton-codes
 - Clear conversation button
 - Markdown rendering for responses
 
-## Last Session — 2026-03-05
+## Session Log
+
+### 2026-03-05
 - First time reviewing this project in Claude Code
+- Reviewed full project structure via GitHub
+- Set up CLAUDE.md for session memory across all three projects
 - **Next**: Ask user what they want to work on
 
 ## Notes
